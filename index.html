@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Auto Data Logger</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Data Logger App</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f2f2f2; }
     h2 { text-align: center; }
@@ -14,7 +14,7 @@
   </style>
 </head>
 <body>
-  <h2>Auto Data Logger App</h2>
+  <h2>Improved Data Logger</h2>
   <table id="data-table">
     <thead>
       <tr>
@@ -22,9 +22,9 @@
         <th>Date</th>
         <th>Latitude</th>
         <th>Longitude</th>
-        <th>5G (0/1)</th>
+        <th>Is 5G (0/1)</th>
         <th>Latency (ms)</th>
-        <th>Device Model</th>
+        <th>Ping (ms)</th>
       </tr>
     </thead>
     <tbody id="table-body"></tbody>
@@ -35,33 +35,43 @@
     let serial = 1;
     const tableBody = document.getElementById("table-body");
 
+    // 1. Improved 5G Detection
+    function is5GConnection() {
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (connection) {
+        const effective = connection.effectiveType;
+        const type = connection.type || "";
+        if (effective === "5g" || type.toLowerCase().includes("5g")) return 1;
+      }
+      return 0;
+    }
+
+    // 2. Latency (measured using fetch)
     async function getLatency() {
       const start = performance.now();
       try {
-        await fetch("https://www.google.com", { mode: "no-cors" });
+        await fetch("https://corsproxy.io/?https://example.com", { method: "GET" });
       } catch (e) {}
       const end = performance.now();
       return Math.round(end - start);
     }
 
-    function getNetworkType() {
-      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      if (connection && connection.effectiveType) {
-        return connection.effectiveType === "5g" ? 1 : 0;
-      }
-      return 0; // fallback
+    // 3. Ping time (by loading a small image)
+    async function getPing() {
+      return new Promise(resolve => {
+        const img = new Image();
+        const start = performance.now();
+        img.onload = () => resolve(Math.round(performance.now() - start));
+        img.onerror = () => resolve(Math.round(performance.now() - start));
+        img.src = "https://www.google.com/favicon.ico?" + Date.now(); // prevent cache
+      });
     }
 
-    function getDeviceModel() {
-      return navigator.userAgent;
-    }
-
-    function logData(lat, lon, latency, is5g) {
+    // Log row into table
+    function logData(lat, lon, latency, ping, is5g) {
       const row = document.createElement("tr");
       const date = new Date().toISOString().split("T")[0];
-      const model = getDeviceModel();
-
-      [serial++, date, lat, lon, is5g, latency, model].forEach(val => {
+      [serial++, date, lat, lon, is5g, latency, ping].forEach(val => {
         const cell = document.createElement("td");
         cell.textContent = val;
         row.appendChild(cell);
@@ -69,14 +79,16 @@
       tableBody.appendChild(row);
     }
 
+    // Main data collector
     async function collectData() {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(async (position) => {
           const lat = position.coords.latitude.toFixed(6);
           const lon = position.coords.longitude.toFixed(6);
           const latency = await getLatency();
-          const is5g = getNetworkType();
-          logData(lat, lon, latency, is5g);
+          const ping = await getPing();
+          const is5g = is5GConnection();
+          logData(lat, lon, latency, ping, is5g);
         }, (err) => {
           alert("GPS access denied. Cannot collect data.");
         });
@@ -85,10 +97,11 @@
       }
     }
 
+    // CSV Download
     document.getElementById("download").addEventListener("click", () => {
-      let csv = "sl_no,date,latitude,longitude,is_5g,latency_ms,device_model\n";
+      let csv = "sl_no,date,latitude,longitude,is_5g,latency_ms,ping_ms\n";
       Array.from(tableBody.children).forEach(row => {
-        let rowData = Array.from(row.children).map(td => '"' + td.textContent + '"').join(",");
+        const rowData = Array.from(row.children).map(td => `"${td.textContent}"`).join(",");
         csv += rowData + "\n";
       });
       const blob = new Blob([csv], { type: 'text/csv' });
@@ -100,7 +113,7 @@
       URL.revokeObjectURL(url);
     });
 
-    // Trigger data collection on page load
+    // Ask permission and start logging
     window.onload = () => {
       if (confirm("Do you allow the app to collect GPS and network data?")) {
         collectData();
